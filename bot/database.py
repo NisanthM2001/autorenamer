@@ -51,12 +51,12 @@ def init_db():
         return False
         
     try:
-        # Use certifi for SSL/TLS certificates
+        # Use certifi for SSL/TLS certificates - standard for MongoDB Atlas
         db_client = MongoClient(
             DATABASE_URL, 
             tlsCAFile=ca,
-            tlsAllowInvalidCertificates=True, 
-            serverSelectionTimeoutMS=5000
+            serverSelectionTimeoutMS=5000,
+            connectTimeoutMS=10000
         )
         # Test connection
         db_client.admin.command('ping')
