@@ -8,16 +8,16 @@ from pyrogram import filters
 from pyrogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from bot.config import Config
 from bot.thumbnail import save_thumbnail, delete_thumbnail, has_thumbnail, get_thumbnail
-from bot.processor import process_range, get_status_text, current_status
-from bot.database import update_setting, save_settings, save_backup, load_backup
+from bot.processor import process_range, get_status_text, current_status, process_single_file
+from bot.database import update_setting, save_settings, save_backup, load_backup, add_admin, remove_admin
 
 user_data: dict[int, dict] = {}
 
 def is_owner(_, __, message: Message):
-    return message.from_user and message.from_user.id == Config.OWNER_ID
+    return message.from_user and (message.from_user.id == Config.OWNER_ID or message.from_user.id in Config.ADMIN_IDS)
 
 def is_owner_callback(_, __, callback: CallbackQuery):
-    return callback.from_user and callback.from_user.id == Config.OWNER_ID
+    return callback.from_user and (callback.from_user.id == Config.OWNER_ID or callback.from_user.id in Config.ADMIN_IDS)
 
 owner_filter = filters.create(is_owner)
 owner_callback_filter = filters.create(is_owner_callback)
@@ -230,6 +230,9 @@ def register_handlers(app: Client):
         user_id = callback.from_user.id
         if user_id in user_data:
             user_data[user_id]['waiting_for'] = None
+            if 'awaiting_custom_name' in user_data[user_id]:
+                del user_data[user_id]['awaiting_custom_name']
+                del user_data[user_id]['msg_id']
         
         await callback.message.edit_text(get_main_menu_text(), reply_markup=get_main_menu())
         await callback.answer("Cancelled")
@@ -239,6 +242,9 @@ def register_handlers(app: Client):
         user_id = callback.from_user.id
         if user_id in user_data:
             user_data[user_id]['waiting_for'] = None
+            if 'awaiting_custom_name' in user_data[user_id]:
+                del user_data[user_id]['awaiting_custom_name']
+                del user_data[user_id]['msg_id']
             user_data[user_id]['menu_message'] = callback.message
         
         await callback.message.edit_text(get_main_menu_text(), reply_markup=get_main_menu())
@@ -249,6 +255,9 @@ def register_handlers(app: Client):
         user_id = callback.from_user.id
         if user_id in user_data:
             user_data[user_id]['waiting_for'] = None
+            if 'awaiting_custom_name' in user_data[user_id]:
+                del user_data[user_id]['awaiting_custom_name']
+                del user_data[user_id]['msg_id']
             user_data[user_id]['menu_message'] = callback.message
         else:
             user_data[user_id] = {'menu_message': callback.message}
@@ -339,7 +348,7 @@ def register_handlers(app: Client):
 **💬 CAPTION VARIABLES**
 Add dynamic info to every file caption:
 - {{filename}} - Processed filename (underscores removed, @username removed)
-- {{filesize}} - File size (e.g., 1.5GB, 500MB)
+- {{filesize}} - File size (e.e.g., 1.5GB, 500MB)
 - {{language}} - Detected language (English, Hindi, Tamil, Telugu, Kannada, Malayalam, Punjabi)
 - {{subtitle}} - Subtitle type (Esub=English, Hsub=Hindi, Msub=Malayalam, Tsub=Tamil, Tesub=Telugu, Ksub=Kannada, Psub=Punjabi, or empty if no subtitle)
 - {{filecaption}} - Original caption from source message
@@ -593,7 +602,7 @@ Current: {Config.CUSTOM_CAPTION or 'None'}
     
     @app.on_callback_query(filters.regex("^del_thumb$") & owner_callback_filter)
     async def del_thumb_callback(client: Client, callback: CallbackQuery):
-        if delete_thumbnail():
+        if await delete_thumbnail():
             await callback.answer("Thumbnail deleted!", show_alert=True)
             await callback.message.edit_text(get_settings_text(), reply_markup=get_settings_menu())
         else:
@@ -659,7 +668,7 @@ Current: {Config.CUSTOM_CAPTION or 'None'}
         Config.START_LINK = None
         Config.END_LINK = None
         Config.PROCESS_ABOVE_2GB = False
-        delete_thumbnail()
+        await delete_thumbnail()
         
         # Reset in database
         await update_setting("source_channels", [])
@@ -736,14 +745,14 @@ Current: {Config.CUSTOM_CAPTION or 'None'}
         )
         await callback.answer()
     
-    @app.on_message(filters.private & owner_filter & ~filters.command(["start", "help", "status", "setrange", "process", "setthumb", "delthumb", "setwhitelist", "setblacklist", "setsource", "setdest", "setprefix", "setsuffix", "restart"]))
+    @app.on_message(filters.private & owner_filter & ~filters.command(["start", "help", "status", "setrange", "process", "setthumb", "delthumb", "setwhitelist", "setblacklist", "setsource", "setdest", "setprefix", "setsuffix", "restart", "addadmin", "deladmin", "admins"]))
     async def handle_user_input(client: Client, message: Message):
         user_id = message.from_user.id
         data = user_data.get(user_id, {})
         waiting_for = data.get('waiting_for')
         menu_message = data.get('menu_message')
         
-        if not waiting_for:
+        if not waiting_for and not data.get('awaiting_custom_name'): # Check for custom name input
             return
         
         text = message.text or ""
@@ -905,7 +914,7 @@ Current: {Config.CUSTOM_CAPTION or 'None'}
                 os.makedirs(Config.DOWNLOAD_DIR, exist_ok=True)
                 await client.download_media(message, file_name=temp_path)
                 
-                if save_thumbnail(temp_path):
+                if await save_thumbnail(temp_path):
                     user_data[user_id]['waiting_for'] = None
                     await update_menu(get_settings_text(), get_settings_menu())
                 else:
@@ -917,6 +926,21 @@ Current: {Config.CUSTOM_CAPTION or 'None'}
                     pass
             else:
                 await show_error("Please send a photo.")
+        
+        elif data.get('awaiting_custom_name'):
+            msg_id = data.get('msg_id')
+            original_message = await client.get_messages(user_id, msg_id)
+            if original_message:
+                await message.reply_text("⏳ Processing your file with custom name...")
+                await process_single_file(client, original_message, message, custom_name=text)
+            else:
+                await message.reply_text("Error: Original file message not found.")
+            
+            del user_data[user_id]['awaiting_custom_name']
+            del user_data[user_id]['msg_id']
+            await message.delete() # Delete the custom name input
+            if menu_message:
+                await menu_message.delete() # Delete the "send new name" prompt
     
     @app.on_message(filters.command("help") & filters.private)
     async def help_command(client: Client, message: Message):
@@ -1039,6 +1063,7 @@ Add captions when uploading with variables:
         
         if channels:
             Config.SOURCE_CHANNEL_IDS = channels
+            await update_setting("source_channels", channels)
             await message.reply_text(
                 f"Source channels set!\n\n{format_channel_list(channels)}",
                 reply_markup=get_main_menu()
@@ -1066,6 +1091,7 @@ Add captions when uploading with variables:
         
         if channels:
             Config.DESTINATION_CHANNEL_IDS = channels
+            await update_setting("destination_channels", channels)
             await message.reply_text(
                 f"Destination channels set!\n\n{format_channel_list(channels)}",
                 reply_markup=get_main_menu()
@@ -1170,7 +1196,7 @@ Add captions when uploading with variables:
             
             await client.download_media(photo, file_name=temp_path)
             
-            if save_thumbnail(temp_path):
+            if await save_thumbnail(temp_path):
                 await status_msg.edit_text("Thumbnail saved!", reply_markup=get_main_menu())
             else:
                 await status_msg.edit_text("Failed to save thumbnail.")
@@ -1931,5 +1957,86 @@ Add captions when uploading with variables:
             print(f"[IMPORT-TEXT] Error: {type(e).__name__}: {e}")
             await message.reply_text(f"❌ Error importing JSON: {e}", reply_markup=get_settings_menu())
             user_data[user_id]['waiting_for'] = None
+
+
+    # --- Admin Commands ---
+    @app.on_message(filters.command("addadmin") & owner_filter)
+    async def add_admin_command(client: Client, message: Message):
+        if len(message.command) < 2:
+            return await message.reply_text("Usage: `/addadmin user_id`")
+        try:
+            user_id = int(message.command[1])
+            await add_admin(user_id)
+            await message.reply_text(f"✅ User `{user_id}` added as admin.", parse_mode=ParseMode.MARKDOWN)
+        except ValueError:
+            await message.reply_text("❌ Invalid User ID.")
+
+    @app.on_message(filters.command("deladmin") & owner_filter)
+    async def del_admin_command(client: Client, message: Message):
+        if len(message.command) < 2:
+            return await message.reply_text("Usage: `/deladmin user_id`")
+        try:
+            user_id = int(message.command[1])
+            await remove_admin(user_id)
+            await message.reply_text(f"✅ User `{user_id}` removed from admins.", parse_mode=ParseMode.MARKDOWN)
+        except ValueError:
+            await message.reply_text("❌ Invalid User ID.")
+
+    @app.on_message(filters.command("admins") & owner_filter)
+    async def list_admins_command(client: Client, message: Message):
+        if not Config.ADMIN_IDS:
+            return await message.reply_text("No additional admins configured.")
+        text = "👤 **Current Admins:**\n"
+        for uid in Config.ADMIN_IDS:
+            text += f"• `{uid}`\n"
+        await message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
+
+    # --- File Renamer Handler ---
+    @app.on_message(filters.private & (filters.document | filters.video | filters.audio))
+    async def renamer_handler(client: Client, message: Message):
+        # Use existing rename logic for automatic suggestion
+        from bot.filters import get_file_name, rename_file
+        file_name = get_file_name(message)
+        suggested_name = rename_file(file_name)
+        
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Auto Rename", callback_data=f"rename_auto_{message.id}")],
+            [InlineKeyboardButton("✏️ Custom Name", callback_data=f"rename_custom_{message.id}")],
+            [InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")]
+        ])
+        
+        await message.reply_text(
+            f"<b>File received!</b>\n\n"
+            f"📄 <b>Original:</b> <code>{file_name}</code>\n"
+            f"✨ <b>Suggested:</b> <code>{suggested_name}</code>\n\n"
+            f"Choose an option below:",
+            reply_markup=markup,
+            parse_mode=ParseMode.HTML
+        )
+
+    @app.on_callback_query(filters.regex(r"^rename_auto_(\d+)"))
+    async def rename_auto_callback(client: Client, callback: CallbackQuery):
+        msg_id = int(callback.data.split("_")[2])
+        message = await client.get_messages(callback.message.chat.id, msg_id)
+        
+        if not message:
+            return await callback.answer("Error: Message not found.", show_alert=True)
+            
+        await callback.message.edit_text("⏳ Processing your file...")
+        await process_single_file(client, message, callback.message)
+
+    @app.on_callback_query(filters.regex(r"^rename_custom_(\d+)"))
+    async def rename_custom_callback(client: Client, callback: CallbackQuery):
+        msg_id = int(callback.data.split("_")[2])
+        user_id = callback.from_user.id
+        if user_id not in user_data:
+            user_data[user_id] = {}
+        user_data[user_id]['awaiting_custom_name'] = True
+        user_data[user_id]['msg_id'] = msg_id
+        
+        await callback.message.edit_text(
+            "Please send the new name for the file (including extension):",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Cancel", callback_data="cancel_input")]])
+        )
 
     return app

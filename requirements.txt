@@ -1,6 +1,7 @@
 pyrogram==2.0.106
 tgcrypto==1.2.5
 python-dotenv==1.0.0
-pillow==10.0.0
-psycopg2-binary==2.9.9
-pymongo==4.5.0
+pymongo[srv]==4.6.1
+Pillow==10.2.0
+certifi==2024.2.2
+

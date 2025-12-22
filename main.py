@@ -1,8 +1,14 @@
 import sys
+import asyncio
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 from bot.config import Config
 from bot.client import app
 from bot.handlers import register_handlers
-from bot.database import load_settings_sync
+from bot.database import load_settings_sync, load_admins_sync
 
 def load_settings_from_database():
     """Load all settings from database (MongoDB or memory)"""
@@ -21,8 +27,12 @@ def load_settings_from_database():
         Config.END_LINK = settings.get("end_link")
         Config.PROCESS_ABOVE_2GB = settings.get("process_above_2gb", False)
         Config.PARALLEL_DOWNLOADS = settings.get("parallel_downloads", 1)
+        
+        # Load dynamic admins
+        Config.ADMIN_IDS = load_admins_sync()
+        
     except Exception as e:
-        print(f"⚠️ Could not load settings: {e}")
+        print(f"[WARNING] Could not load settings: {e}")
 
 def main():
     print("=" * 50)
@@ -45,8 +55,8 @@ def main():
     
     info = Config.get_info()
     print(f"\nConfiguration status:")
-    print(f"  - API: {'✅ OK' if info['api_configured'] else '❌ Missing'}")
-    print(f"  - Bot Token: {'✅ OK' if info['bot_token_set'] else '❌ Missing'}")
+    print(f"  - API: {'[OK]' if info['api_configured'] else '[Missing]'}")
+    print(f"  - Bot Token: {'[OK]' if info['bot_token_set'] else '[Missing]'}")
     print(f"  - Source Channels: {info['source_channels']} configured")
     print(f"  - Destination Channels: {info['destination_channels']} configured")
     print(f"  - Whitelist: {len(info['whitelist_words'])} words")

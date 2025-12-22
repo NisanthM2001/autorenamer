@@ -474,3 +474,119 @@ async def process_range(client: Client, start_link: str, end_link: str, status_m
     except Exception as e:
         current_status['status'] = 'idle'
         return None, f"❌ Error: {str(e)[:100]}"
+
+async def process_single_file(client: Client, message: Message, status_message: Message, custom_name: str = None):
+    """Process a single file for the Auto Renamer flow"""
+    global dl_speed_data, ul_speed_data
+    
+    try:
+        from bot.filters import get_file_name, rename_file
+        
+        # Get filename
+        original_name = get_file_name(message)
+        if custom_name:
+            # Ensure it has an extension if the original did
+            if '.' in original_name and '.' not in custom_name:
+                ext = original_name.rsplit('.', 1)[1]
+                file_name = f"{custom_name}.{ext}"
+            else:
+                file_name = custom_name
+        else:
+            file_name = rename_file(original_name)
+            
+        file_size = 0
+        if message.document:
+            file_size = message.document.file_size
+        elif message.video:
+            file_size = message.video.file_size
+        elif message.audio:
+            file_size = message.audio.file_size
+            
+        download_path = os.path.join(Config.DOWNLOAD_DIR, file_name)
+        
+        # 1. Download
+        dl_speed_data['last_time'] = time.time()
+        dl_speed_data['last_bytes'] = 0
+        
+        async def download_progress(current, total):
+            now = time.time()
+            elapsed = now - dl_speed_data['last_time']
+            if elapsed > 1.0:
+                speed = (current - dl_speed_data['last_bytes']) / elapsed
+                pct = (current / total * 100) if total > 0 else 0
+                prog_bar = get_progress_bar(current, total)
+                try:
+                    await status_message.edit_text(
+                        f"📥 <b>Downloading...</b>\n\n"
+                        f"📄 <code>{file_name}</code>\n"
+                        f"{prog_bar} <b>{pct:.1f}%</b>\n"
+                        f"<b>💾</b> {format_bytes(current)} / {format_bytes(total)}\n"
+                        f"<b>🚀</b> {format_bytes(speed)}/s",
+                        parse_mode=ParseMode.HTML
+                    )
+                except: pass
+                dl_speed_data['last_bytes'] = current
+                dl_speed_data['last_time'] = now
+
+        await client.download_media(message, file_name=download_path, progress=download_progress)
+        
+        # 2. Upload
+        ul_speed_data['last_time'] = time.time()
+        ul_speed_data['last_bytes'] = 0
+        
+        actual_size = os.path.getsize(download_path) if os.path.exists(download_path) else file_size
+        
+        # Extract language and subtitle
+        language, subtitle = extract_language_and_subtitle(original_name)
+        
+        # Build caption
+        caption_template = Config.CUSTOM_CAPTION or "📄 <b>{filename}</b>\n\n<b>Size:</b> {filesize}\n<b>Language:</b> {language}\n<b>Subtitle:</b> {subtitle}"
+        caption = caption_template.format(
+            filename=file_name,
+            filesize=format_bytes(actual_size),
+            language=language,
+            subtitle=subtitle,
+            filecaption=message.caption or ""
+        )
+        
+        thumbnail = get_thumbnail()
+        
+        async def upload_progress(current, total):
+            now = time.time()
+            elapsed = now - ul_speed_data['last_time']
+            if elapsed > 1.0:
+                speed = (current - ul_speed_data['last_bytes']) / elapsed
+                pct = (current / total * 100) if total > 0 else 0
+                prog_bar = get_progress_bar(current, total)
+                try:
+                    await status_message.edit_text(
+                        f"📤 <b>Uploading...</b>\n\n"
+                        f"📄 <code>{file_name}</code>\n"
+                        f"{prog_bar} <b>{pct:.1f}%</b>\n"
+                        f"<b>💾</b> {format_bytes(current)} / {format_bytes(total)}\n"
+                        f"<b>🚀</b> {format_bytes(speed)}/s",
+                        parse_mode=ParseMode.HTML
+                    )
+                except: pass
+                ul_speed_data['last_bytes'] = current
+                ul_speed_data['last_time'] = now
+
+        await client.send_document(
+            message.chat.id,
+            download_path,
+            caption=caption,
+            thumb=thumbnail,
+            progress=upload_progress,
+            parse_mode=ParseMode.HTML
+        )
+        
+        # 3. Cleanup
+        if os.path.exists(download_path):
+            os.remove(download_path)
+            
+        await status_message.edit_text("✅ <b>Success!</b> File renamed and uploaded.", parse_mode=ParseMode.HTML)
+        
+    except Exception as e:
+        await status_message.edit_text(f"❌ <b>Error:</b> {str(e)}", parse_mode=ParseMode.HTML)
+        if 'download_path' in locals() and os.path.exists(download_path):
+            os.remove(download_path)
