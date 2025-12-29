@@ -1,5 +1,6 @@
 import sys
 import asyncio
+from pyrogram.errors import FloodWait
 try:
     asyncio.get_event_loop()
 except RuntimeError:
@@ -68,7 +69,13 @@ def main():
     print("Starting bot...")
     print("=" * 50)
     
-    app.run()
+    try:
+        app.run()
+    except FloodWait as e:
+        print(f"\n[CRITICAL] Telegram FloodWait detected!")
+        print(f"Server refused connection. You must wait {e.value} seconds ({e.value // 60} minutes).")
+        print("Do not restart the bot immediately, or the timer will increase.")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

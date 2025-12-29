@@ -19,6 +19,7 @@ def is_owner(_, __, message: Message):
 def is_owner_callback(_, __, callback: CallbackQuery):
     return callback.from_user and (callback.from_user.id == Config.OWNER_ID or callback.from_user.id in Config.ADMIN_IDS)
 
+ 
 owner_filter = filters.create(is_owner)
 owner_callback_filter = filters.create(is_owner_callback)
 
