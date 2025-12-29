@@ -36,6 +36,8 @@ def load_settings_from_database():
         print(f"[WARNING] Could not load settings: {e}")
 
 
+import time
+
 def main():
     print("=" * 50)
     print("Channel File Processor Bot")
@@ -70,13 +72,20 @@ def main():
     print("Starting bot...")
     print("=" * 50)
     
-    try:
-        app.run()
-    except FloodWait as e:
-        print(f"\n[CRITICAL] Telegram FloodWait detected!")
-        print(f"Server refused connection. You must wait {e.value} seconds ({e.value // 60} minutes).")
-        print("Do not restart the bot immediately, or the timer will increase.")
-        sys.exit(1)
+    while True:
+        try:
+            app.run()
+            break # Exit loop if run() returns normally (e.g. stop signal)
+        except FloodWait as e:
+            wait_time = e.value + 10
+            print(f"\n[CRITICAL] Telegram FloodWait detected!")
+            print(f"Server refused connection. You must wait {e.value} seconds ({e.value // 60} minutes).")
+            print(f"Sleeping for {wait_time} seconds before retrying...")
+            time.sleep(wait_time)
+        except Exception as e:
+            print(f"\n[ERROR] Unexpected error: {e}")
+            print("Retrying in 10 seconds...")
+            time.sleep(10)
 
 if __name__ == "__main__":
     try:
