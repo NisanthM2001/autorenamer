@@ -451,6 +451,17 @@ async def process_range(client: Client, start_link: str, end_link: str, status_m
                 completed_count += 1
                 current_status['processed'] = completed_count
                 
+                # Rate Limit: Wait 3 minutes after every 3 files
+                if completed_count % 3 == 0:
+                    wait_seconds = 180
+                    for i in range(wait_seconds, 0, -1):
+                        if current_status['cancel_all']:
+                            break
+                        current_status['status'] = f'cooling down ({i}s)'
+                        await asyncio.sleep(1)
+                    current_status['status'] = 'idle'
+
+                
             except Exception as e:
                 print(f"Error: {e}")
                 failed_count += 1
