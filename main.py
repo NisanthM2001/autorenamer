@@ -1,10 +1,10 @@
 import sys
 import asyncio
+from pyrogram import idle
 from pyrogram.errors import FloodWait
-try:
-    asyncio.get_event_loop()
-except RuntimeError:
-    asyncio.set_event_loop(asyncio.new_event_loop())
+
+if sys.platform.startswith('win'):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from bot.config import Config
 from bot.client import app
@@ -34,6 +34,7 @@ def load_settings_from_database():
         
     except Exception as e:
         print(f"[WARNING] Could not load settings: {e}")
+
 
 def main():
     print("=" * 50)
@@ -78,4 +79,9 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nBot stopped by user")
+    except Exception as e:
+        print(f"\nError: {e}")
